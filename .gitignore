@@ -1,0 +1,65 @@
+# Python bytecode and interpreter caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments and Conda environments
+.venv/
+venv/
+env/
+ENV/
+.conda/
+
+# Python tooling and test artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+
+# Packaging and build output
+build/
+dist/
+*.egg-info/
+*.egg
+
+# IDE and editor settings
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+# Jupyter notebooks
+.ipynb_checkpoints/
+
+# Local environment and secret files
+.env
+.env.*
+!.env.example
+
+# Logs, profiling, and runtime output
+*.log
+*.prof
+*.lprof
+logs/
+output/
+outputs/
+captures/
+
+# Generated Minimal-IK example meshes
+/gt.obj
+/est.obj
+/inverse_kinematics/gt.obj
+/inverse_kinematics/est.obj
+
+# OS metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
