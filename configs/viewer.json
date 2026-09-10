@@ -1,0 +1,37 @@
+{
+  "camera": {
+    "index": 0,
+    "width": 640,
+    "height": 480,
+    "mirror": true
+  },
+  "detector": {
+    "model_complexity": 0,
+    "max_hands": 2,
+    "min_detection_confidence": 0.5,
+    "min_tracking_confidence": 0.6
+  },
+  "mano": {
+    "iterations": 5,
+    "pose_smoothing": 0.7
+  },
+  "tracking": {
+    "handedness_confirm_frames": 5,
+    "handedness_map": "auto"
+  },
+  "depth_estimation": {
+    "enabled": true,
+    "reference_depth": 50.0,
+    "minimum_depth": 10.0,
+    "maximum_depth": 300.0,
+    "calibration_frames": 30,
+    "min_cutoff": 1.0,
+    "beta": 0.02,
+    "max_speed": 500.0,
+    "motion_gain": 1.5
+  },
+  "viewer": {
+    "initial_view": "depth",
+    "window_name": "MediaPipe to MANO"
+  }
+}

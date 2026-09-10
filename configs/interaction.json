@@ -1,0 +1,50 @@
+{
+  "camera": {
+    "index": 0,
+    "width": 640,
+    "height": 480,
+    "mirror": false
+  },
+  "detector": {
+    "model_complexity": 0,
+    "max_hands": 2,
+    "min_detection_confidence": 0.5,
+    "min_tracking_confidence": 0.6
+  },
+  "mano": {
+    "iterations": 3,
+    "pose_smoothing": 0.7
+  },
+  "tracking": {
+    "handedness_confirm_frames": 10,
+    "handedness_map": "direct"
+  },
+  "depth_estimation": {
+    "enabled": true,
+    "reference_depth": 50.0,
+    "minimum_depth": 10.0,
+    "maximum_depth": 300.0,
+    "calibration_frames": 30,
+    "min_cutoff": 1.0,
+    "beta": 0.02,
+    "max_speed": 500.0,
+    "motion_gain": 1.5
+  },
+  "viewer": {
+    "initial_view": "front",
+    "window_name": "MANO Ball Interaction"
+  },
+  "pinch": {
+    "enter_distance": 0.035,
+    "exit_distance": 0.045,
+    "grab_tolerance": 8.0,
+    "missing_timeout": 0.18
+  },
+  "ball": {
+    "radius": 35.0,
+    "depth": 100.0,
+    "minimum_scale": 0.35,
+    "maximum_scale": 5.0,
+    "scale_sensitivity": 0.8
+  }
+}
