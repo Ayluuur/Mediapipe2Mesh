@@ -21,16 +21,20 @@ def map_handedness(label, mapping='direct', mirrored_input=True):
 class HandednessResolver:
     """Associate wrists over time and debounce handedness labels."""
 
-    def __init__(self, confirm_frames=5, track_timeout=0.5,
+    def __init__(self, confirm_frames=5, track_timeout=0.35,
                  max_wrist_distance=0.30):
         self.confirm_frames = confirm_frames
         self.track_timeout = track_timeout
         self.max_wrist_distance = max_wrist_distance
+        self.pending = {}
 
     def resolve(self, raw_detections, states, timestamp):
         resolved = {}
         used_detections = set()
         used_states = set()
+        for state in states.values():
+            if state.screen_wrist is not None and timestamp - state.last_seen >= self.track_timeout:
+                state.deactivate()
         recent_states = [
             state for state in states.values()
             if (state.screen_wrist is not None and
@@ -49,37 +53,42 @@ class HandednessResolver:
             if index in used_detections or state_side in used_states:
                 continue
             detection = raw_detections[index]
-            state = states[state_side]
             stable_side = state_side
-            if detection['raw_side'] == state_side:
-                state.side_candidate = None
-                state.side_candidate_frames = 0
-            else:
-                if state.side_candidate == detection['raw_side']:
-                    state.side_candidate_frames += 1
-                else:
-                    state.side_candidate = detection['raw_side']
-                    state.side_candidate_frames = 1
-                candidate = states[detection['raw_side']]
-                free = (timestamp - candidate.last_seen >= self.track_timeout
-                        and detection['raw_side'] not in resolved)
-                if state.side_candidate_frames >= self.confirm_frames and free:
-                    stable_side = detection['raw_side']
-                    state.side_candidate = None
-                    state.side_candidate_frames = 0
+            # Identity belongs to the active spatial track, not the latest
+            # handedness label. Reclassify only after disappearance/re-entry.
             detection['label_was_stabilized'] = (
                 detection['raw_side'] != stable_side
             )
             resolved[stable_side] = detection
             used_detections.add(index)
             used_states.add(state_side)
+        candidates = {}
+        active_sides = {state.side for state in recent_states}
         for index, detection in enumerate(raw_detections):
             if index in used_detections:
                 continue
             side = detection['raw_side']
-            detection['label_was_stabilized'] = False
-            previous = resolved.get(side)
+            if side in resolved or side in active_sides:
+                continue  # Never overwrite a spatially matched track.
+            # With only one detection, an unmatched live hand may have jumped.
+            # Wait for its timeout instead of creating the opposite MANO hand.
+            if len(raw_detections) == 1 and recent_states:
+                continue
+            previous = candidates.get(side)
             if previous is None or detection['score'] > previous['score']:
+                candidates[side] = detection
+        pending = {}
+        for side, detection in candidates.items():
+            previous = self.pending.get(side)
+            continuous = (previous is not None
+                          and timestamp - previous[2] < self.track_timeout
+                          and np.linalg.norm(detection['wrist'] - previous[0])
+                          <= self.max_wrist_distance)
+            count = previous[1] + 1 if continuous else 1
+            if count >= self.confirm_frames:
+                detection['label_was_stabilized'] = False
                 resolved[side] = detection
+            else:
+                pending[side] = (detection['wrist'].copy(), count, timestamp)
+        self.pending = pending  # A missing candidate breaks consecutive confirmation.
         return resolved
-

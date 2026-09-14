@@ -165,7 +165,7 @@ def run_viewer(config):
 
                 visible = [
                     side for side, state in states.items()
-                    if now - state.last_seen < 0.20 and state.vertices is not None
+                    if now - state.last_seen < resolver.track_timeout and state.vertices is not None
                 ]
                 for side, state in states.items():
                     if side in visible:

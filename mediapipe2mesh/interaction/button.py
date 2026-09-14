@@ -1,9 +1,8 @@
-"""Depth button and fingertip markers in the existing scene coordinates."""
+"""Depth button and fingertip contact in the existing scene coordinates."""
 
 import numpy as np
 import open3d as o3d
 
-from .components import PINCH_COLORS
 from mediapipe2mesh.visualization import SceneMapper
 
 
@@ -39,17 +38,6 @@ class DepthButton:
         self.base = self._box(width + 12.0, height + 12.0, 8.0)
         self.base.translate(self.center + [0, 0, travel + 10.0])
         self.base.paint_uniform_color((0.22, 0.25, 0.30))
-        self.markers = {}
-        self.marker_vertices = {}
-        self.visible_markers = set()
-        for side in PINCH_COLORS:
-            marker = o3d.geometry.TriangleMesh.create_sphere(
-                radius=tip_radius, resolution=12,
-            )
-            marker.compute_vertex_normals()
-            self.markers[side] = marker
-            self.marker_vertices[side] = np.asarray(marker.vertices).copy()
-        self.points = {}
         self._update_cap()
 
     @staticmethod
@@ -90,7 +78,6 @@ class DepthButton:
         self.pressed = pressed
         self.contacts = contacts
         self.previous = points
-        self.points = points
         self._update_cap()
 
     def _update_cap(self):
@@ -106,18 +93,3 @@ class DepthButton:
 
     def update_geometry(self, visualizer):
         visualizer.update_geometry(self.cap)
-        for side, marker in self.markers.items():
-            if side in self.points:
-                marker.vertices = o3d.utility.Vector3dVector(
-                    self.marker_vertices[side] + self.points[side]
-                )
-                marker.paint_uniform_color(
-                    (0.15, 1.0, 0.35) if side in self.contacts else PINCH_COLORS[side]
-                )
-                if side not in self.visible_markers:
-                    visualizer.add_geometry(marker, reset_bounding_box=False)
-                    self.visible_markers.add(side)
-                visualizer.update_geometry(marker)
-            elif side in self.visible_markers:
-                visualizer.remove_geometry(marker, reset_bounding_box=False)
-                self.visible_markers.remove(side)

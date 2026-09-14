@@ -104,6 +104,6 @@ def retire_missing_single_hand(raw_detections, detections, states,
             # filter history until the normal reacquisition timeout expires.
             if timestamp - state.last_seen > 0.35:
                 state.deactivate()
-            if on_retire is not None:
-                on_retire(side)
+                if on_retire is not None:
+                    on_retire(side)
 

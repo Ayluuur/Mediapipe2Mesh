@@ -70,7 +70,7 @@ class TrackingJitterTests(unittest.TestCase):
         release = Mock()
         retire_missing_single_hand([{}], {'right': {}}, states, release)
         states['left'].deactivate.assert_not_called()
-        release.assert_called_once_with('left')
+        release.assert_not_called()
         states['right'].last_seen = 1.4
         retire_missing_single_hand([{}], {'right': {}}, states)
         states['left'].deactivate.assert_called_once()

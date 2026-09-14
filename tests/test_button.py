@@ -62,14 +62,16 @@ class ButtonTests(unittest.TestCase):
         self.button.update({'left': [np.nan, 0, 0]})
         self.assertFalse(self.button.pressed)
 
-    def test_markers_removed_on_tracking_loss(self):
+    def test_contact_updates_without_showing_markers(self):
         viewer = Mock()
         self.button.update({'left': self.point(), 'right': self.point()})
         self.button.update_geometry(viewer)
-        self.assertEqual(self.button.visible_markers, {'left', 'right'})
+        self.assertEqual(self.button.contacts, {'left', 'right'})
+        viewer.add_geometry.assert_not_called()
         self.button.update({})
         self.button.update_geometry(viewer)
-        self.assertEqual(viewer.remove_geometry.call_count, 2)
+        self.assertFalse(self.button.pressed)
+        viewer.remove_geometry.assert_not_called()
 
     def test_tip_uses_same_scene_transform_as_mesh(self):
         state = SimpleNamespace(
