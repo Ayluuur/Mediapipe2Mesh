@@ -15,6 +15,7 @@ from mediapipe2mesh.apps.common import (
     open_camera,
     retire_missing_single_hand,
     update_hand_track,
+    update_hand_scene_position,
 )
 from mediapipe2mesh.interaction import (
     BallController,
@@ -25,12 +26,13 @@ from mediapipe2mesh.interaction import (
 from mediapipe2mesh.tracking import (
     HandState,
     HandednessResolver,
-    RelativeDepthEstimator,
+    MultiHandDepthEstimator,
 )
 from mediapipe2mesh.visualization import (
     SceneMapper,
     configure_view,
     create_scene_bounds,
+    create_visualizer,
     set_geometry_visible,
 )
 
@@ -63,7 +65,6 @@ def validate_config(config):
 
 def  run_interaction(config):
     validate_config(config)
-    mapper = SceneMapper()
     hand_states = {
         side: HandState(
             side, config.mano.iterations, config.mano.pose_smoothing
@@ -80,17 +81,21 @@ def  run_interaction(config):
     resolver = HandednessResolver(
         confirm_frames=config.tracking.handedness_confirm_frames
     )
-    depth_estimators = {
-        side: RelativeDepthEstimator.from_config(config.depth_estimation)
-        for side in SIDES
-    }
+    depth_tracker = MultiHandDepthEstimator(config.depth_estimation, SIDES)
+    depth_estimators = depth_tracker.estimators
     depths = {side: 0.0 for side in SIDES}
 
-    visualizer = o3d.visualization.Visualizer()
-    visualizer.create_window(window_name=config.viewer.window_name)
+    def request_depth_calibration():
+        if config.depth_estimation.enabled:
+            depth_tracker.request_calibration(time.perf_counter())
+
+    visualizer = create_visualizer(
+        config.viewer.window_name, on_calibrate=request_depth_calibration
+    )
     scene_bounds = create_scene_bounds(visualizer)
     view_mode = config.viewer.initial_view
     configure_view(visualizer, view_mode)
+    mapper = SceneMapper()
     ball = InteractiveBall(config.ball.radius, config.ball.depth)
     ball.add_to(visualizer)
     controller = BallController(
@@ -132,15 +137,34 @@ def  run_interaction(config):
                     config.camera.mirror,
                 )
                 detections = resolver.resolve(raw, hand_states, now)
+                if config.depth_estimation.enabled:
+                    scene_scales = {
+                        side: mapper.palm_scale(
+                            detection['screen'], detection['world'],
+                            hand_states[side].scene_reference_keypoints,
+                            frame.shape[1], frame.shape[0],
+                            segment_corrections=hand_states[side].scene_segment_corrections,
+                        ) for side, detection in detections.items()
+                    }
+                    # Express magnification as a virtual 20 mm segment in pixels.
+                    depths.update(depth_tracker.update(
+                        {side: detection['screen']
+                         for side, detection in detections.items()},
+                        now, frame.shape[1], frame.shape[0],
+                        palm_sizes={side: 20.0 / scale if scale is not None else np.nan
+                                    for side, scale in scene_scales.items()},
+                    ))
                 for side, detection in detections.items():
                     hand_state = hand_states[side]
                     filtered_world = update_hand_track(
                         hand_state, detection, now
                     )
                     if config.depth_estimation.enabled:
-                        depths[side] = depth_estimators[side].update(
-                            detection['screen'], now,
-                            frame.shape[1], frame.shape[0],
+                        update_hand_scene_position(
+                            hand_state, detection, mapper, depths[side],
+                            frame.shape[1], frame.shape[0], now,
+                            mm_per_pixel=(scene_scales[side] if scene_scales[side] is not None
+                                          else np.nan),
                         )
                     point = mano_pinch_point_to_scene(
                         hand_state, mapper, depths[side]
@@ -203,7 +227,8 @@ def  run_interaction(config):
                 for side, state in hand_states.items():
                     if side in visible:
                         vertices = mapper.hand_vertices(
-                            state.vertices, state.display_wrist, depths[side]
+                            state.vertices, state.display_wrist, depths[side],
+                            translation=state.scene_translation,
                         )
                         state.mesh.vertices = o3d.utility.Vector3dVector(vertices)
                         state.mesh.compute_vertex_normals()
@@ -245,9 +270,17 @@ def  run_interaction(config):
                     (12, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.48,
                     (220, 220, 220), 1, cv2.LINE_AA,
                 )
+                if config.depth_estimation.enabled:
+                    cv2.putText(
+                        frame, depth_tracker.calibration_status(now),
+                        (12, frame.shape[0] - 18), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.52, (80, 255, 255), 1, cv2.LINE_AA,
+                    )
                 cv2.imshow('Pinch Interaction', frame)
                 key = cv2.waitKey(1) & 0xFF
-                if key == ord('1'):
+                if key in (10, 13):
+                    request_depth_calibration()
+                elif key == ord('1'):
                     view_mode = 'front'
                     configure_view(visualizer, view_mode)
                 elif key == ord('3'):

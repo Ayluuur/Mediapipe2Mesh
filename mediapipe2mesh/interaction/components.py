@@ -54,7 +54,8 @@ def mano_pinch_point_to_scene(hand_state, mapper=None, depth=0.0):
         return None
     mapper = mapper or SceneMapper()
     points = mapper.hand_keypoints(
-        hand_state.keypoints, hand_state.display_wrist, depth
+        hand_state.keypoints, hand_state.display_wrist, depth,
+        translation=hand_state.scene_translation,
     )
     return (points[16] + points[20]) * 0.5
 

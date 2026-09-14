@@ -63,3 +63,8 @@ captures/
 Thumbs.db
 Desktop.ini
 
+# Qt Port files
+.qt_port_work
+Install-QtPort.ps1
+Mediepipe2Mano_QT-delivery.zip
+Mediepipe2Mano_QT-delivery.zip.json

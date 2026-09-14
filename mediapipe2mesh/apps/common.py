@@ -66,6 +66,32 @@ def update_hand_track(state, detection, timestamp):
     return filtered
 
 
+def update_hand_scene_position(state, detection, mapper, depth,
+                               width, height, timestamp, mm_per_pixel=None):
+    if state.keypoints is None:
+        return
+    if mm_per_pixel is not None:
+        if np.isfinite(mm_per_pixel) and mm_per_pixel > 0:
+            state.scene_mm_per_pixel = mm_per_pixel
+        else:
+            mm_per_pixel = getattr(state, 'scene_mm_per_pixel', None)
+            if mm_per_pixel is None:
+                if state.scene_translation is not None:
+                    state.scene_translation[2] = depth
+                return
+    position = mapper.screen_translation(
+        detection['screen'], state.keypoints, width, height, depth,
+        mm_per_pixel=mm_per_pixel,
+    )
+    if position is not None:
+        # Filter recovered metric XY together, not wrist pixels and apparent
+        # palm scale separately (which would introduce different motion lag).
+        position[:2] = state.scene_position_filter(position[:2], timestamp)
+        state.scene_translation = position
+    elif state.scene_translation is not None:
+        state.scene_translation[2] = depth
+
+
 def retire_missing_single_hand(raw_detections, detections, states,
                                on_retire=None):
     if len(raw_detections) != 1 or len(detections) != 1:

@@ -69,7 +69,11 @@ class RelativeDepthEstimator:
         size = self.measure_palm_size(
             screen_landmarks, frame_width, frame_height
         )
-        if size < 5.0:
+        return self.update_size(size, timestamp)
+
+    def update_size(self, size, timestamp, calibrate=True):
+        """Update from a pixel measurement, optionally calibrated externally."""
+        if not np.isfinite(size) or size < 5.0:
             return self.depth
         if self.last_seen is None or timestamp - self.last_seen > 0.35:
             self.filter.reset()
@@ -77,8 +81,9 @@ class RelativeDepthEstimator:
         self.last_seen = timestamp
 
         if not self.calibrated:
-            self.samples.append(size)
-            if len(self.samples) >= self.calibration_frames:
+            if calibrate:
+                self.samples.append(size)
+            if calibrate and len(self.samples) >= self.calibration_frames:
                 self.reference_size = float(np.median(self.samples))
             raw_depth = self.reference_depth
         else:
@@ -116,3 +121,74 @@ class RelativeDepthEstimator:
             for first, second in PALM_SIZE_SEGMENTS
         ]
         return float(np.median(lengths))
+
+
+class MultiHandDepthEstimator:
+    """Share startup calibration and allow simultaneous per-hand recalibration."""
+
+    def __init__(self, config, sides=('left', 'right')):
+        self.estimators = {
+            side: RelativeDepthEstimator.from_config(config) for side in sides
+        }
+        self.calibration_frames = config.calibration_frames
+        self.samples = []
+        self.reference_size = None
+        self.calibration_deadline = None
+        self.calibration_completed_at = None
+
+    def request_calibration(self, timestamp):
+        self.calibration_deadline = timestamp + 3.0
+        self.calibration_completed_at = None
+
+    def calibration_status(self, timestamp):
+        if self.calibration_deadline is not None:
+            remaining = self.calibration_deadline - timestamp
+            if remaining > 0:
+                return 'Depth calibration in {:.1f}s - hold palms at same depth'.format(remaining)
+            return 'Depth calibration: waiting for hands'
+        if (self.calibration_completed_at is not None
+                and timestamp - self.calibration_completed_at < 2.0):
+            return 'Depth calibration complete'
+        return 'ENTER: calibrate depth after 3s'
+
+    def _recalibrate(self, sizes, timestamp):
+        self.reference_size = float(np.median(list(sizes.values())))
+        self.samples = [self.reference_size]
+        for side, estimator in self.estimators.items():
+            # Both visible hands define the same reference plane. Their
+            # individual sizes compensate for anatomy and detector asymmetry.
+            estimator.reference_size = sizes.get(side, self.reference_size)
+            estimator.samples = [estimator.reference_size]
+            estimator.filter.reset()
+            estimator.last_seen = None
+            estimator.depth = estimator.reference_depth
+        self.calibration_deadline = None
+        self.calibration_completed_at = timestamp
+
+    def update(self, landmarks, timestamp, frame_width, frame_height, palm_sizes=None):
+        sizes = palm_sizes if palm_sizes is not None else {
+            side: RelativeDepthEstimator.measure_palm_size(
+                points, frame_width, frame_height
+            ) for side, points in landmarks.items()
+        }
+        valid_sizes = {side: size for side, size in sizes.items()
+                       if np.isfinite(size) and size >= 5.0}
+        if (self.calibration_deadline is not None
+                and timestamp >= self.calibration_deadline and valid_sizes):
+            self._recalibrate(valid_sizes, timestamp)
+        if self.reference_size is None:
+            valid = [size for size in sizes.values()
+                     if np.isfinite(size) and size >= 5.0]
+            if valid:
+                # One sample per frame makes calibration independent of hand
+                # count and detection order, including late-arriving hands.
+                self.samples.append(float(np.median(valid)))
+                if len(self.samples) >= self.calibration_frames:
+                    self.reference_size = float(np.median(self.samples))
+            for estimator in self.estimators.values():
+                estimator.samples = self.samples.copy()
+                estimator.reference_size = self.reference_size
+        return {
+            side: self.estimators[side].update_size(size, timestamp, calibrate=False)
+            for side, size in sizes.items()
+        }

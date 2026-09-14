@@ -122,10 +122,10 @@ class Keypoints2Mano:
         return points @ mirror @ self.local_to_mano.T @ self.local_to_camera
 
     def get_camera_oriented_vertices(self):
-        return self._camera_orient_points(self.mesh.verts - self.rest_wrist)
+        return self._camera_orient_points(self.mesh.verts - self.mesh.keypoints[0])
 
     def get_camera_oriented_keypoints(self):
-        return self._camera_orient_points(self.mesh.keypoints - self.rest_wrist)
+        return self._camera_orient_points(self.mesh.keypoints - self.mesh.keypoints[0])
 
     def mediapipe2mano_joints(self, keypoints):
         mapping = [
@@ -172,4 +172,3 @@ class Keypoints2Mano:
             keypoints[:, 0] *= -1.0
         keypoints += self.rest_wrist - keypoints[0]
         return keypoints
-

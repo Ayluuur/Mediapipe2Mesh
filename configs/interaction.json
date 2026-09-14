@@ -21,9 +21,9 @@
   },
   "depth_estimation": {
     "enabled": true,
-    "reference_depth": 50.0,
+    "reference_depth": 200.0,
     "minimum_depth": 10.0,
-    "maximum_depth": 300.0,
+    "maximum_depth": 600.0,
     "calibration_frames": 30,
     "min_cutoff": 1.0,
     "beta": 0.02,
@@ -32,19 +32,19 @@
   },
   "viewer": {
     "initial_view": "front",
-    "window_name": "MANO Ball Interaction"
+    "window_name": "MediaPipe Mano Interaction"
   },
   "pinch": {
-    "enter_distance": 0.035,
-    "exit_distance": 0.045,
+    "enter_distance": 0.045,
+    "exit_distance": 0.055,
     "grab_tolerance": 8.0,
     "missing_timeout": 0.18
   },
   "ball": {
-    "radius": 35.0,
-    "depth": 100.0,
+    "radius": 50.0,
+    "depth": 250.0,
     "minimum_scale": 0.35,
-    "maximum_scale": 5.0,
+    "maximum_scale": 8.0,
     "scale_sensitivity": 0.8
   }
 }

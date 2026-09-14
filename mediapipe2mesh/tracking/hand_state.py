@@ -25,6 +25,13 @@ class HandState:
         self.position_filter = OneEuroFilter(
             min_cutoff=1.5, beta=2.0, derivative_cutoff=1.0
         )
+        self.scene_reference_keypoints = self.converter.mesh.keypoints.copy()
+        # Palm proportions persist across temporary loss/re-entry, like depth
+        # calibration. A sideways re-entry must not discard the frontal scale.
+        self.scene_segment_corrections = {}
+        self.scene_position_filter = OneEuroFilter(min_cutoff=1.5, beta=0.02)
+        self.scene_translation = None
+        self.scene_mm_per_pixel = None
         self.future = None
         self.discard_future = False
         self.pending_landmarks = None
@@ -69,6 +76,9 @@ class HandState:
         )
 
     def begin_track(self):
+        self.scene_mm_per_pixel = None
+        self.scene_position_filter.reset()
+        self.scene_translation = None
         self.filter.reset()
         self.position_filter.reset()
         self.vertices = None
@@ -79,6 +89,9 @@ class HandState:
             self.discard_future = True
 
     def deactivate(self):
+        self.scene_mm_per_pixel = None
+        self.scene_position_filter.reset()
+        self.scene_translation = None
         self.last_seen = -np.inf
         self.screen_wrist = None
         self.display_wrist = None
