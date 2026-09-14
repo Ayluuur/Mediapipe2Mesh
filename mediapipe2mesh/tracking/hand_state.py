@@ -15,21 +15,30 @@ HAND_COLORS = {
 
 
 class HandState:
-    def __init__(self, side, max_iter, pose_smoothing):
+    def __init__(self, side, max_iter, pose_smoothing, position_filter_config=None):
         self.side = side
         model_name = 'MANO_LEFT.npz' if side == 'left' else 'MANO_RIGHT.npz'
         self.converter = Keypoints2Mano(
             str(PROJECT_ROOT / model_name), side, max_iter, pose_smoothing
         )
-        self.filter = OneEuroFilter()
+        self.filter = OneEuroFilter(median_window=3)
+        position_options = dict(min_cutoff=1.5, beta=0.005,
+                                median_window=3, max_speed=500.0)
+        if position_filter_config is not None:
+            position_options.update(position_filter_config.as_dict())
+        # The fallback wrist uses normalized image coordinates, whereas the
+        # recovered scene position uses millimeters.
+        screen_options = dict(position_options)
+        screen_options['max_speed'] /= 300.0
+        screen_options['beta'] *= 300.0
         self.position_filter = OneEuroFilter(
-            min_cutoff=1.5, beta=2.0, derivative_cutoff=1.0
+            **screen_options
         )
         self.scene_reference_keypoints = self.converter.mesh.keypoints.copy()
         # Palm proportions persist across temporary loss/re-entry, like depth
         # calibration. A sideways re-entry must not discard the frontal scale.
         self.scene_segment_corrections = {}
-        self.scene_position_filter = OneEuroFilter(min_cutoff=1.5, beta=0.02)
+        self.scene_position_filter = OneEuroFilter(**position_options)
         self.scene_translation = None
         self.scene_mm_per_pixel = None
         self.future = None

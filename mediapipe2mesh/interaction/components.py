@@ -61,9 +61,9 @@ def mano_pinch_point_to_scene(hand_state, mapper=None, depth=0.0):
 
 
 class InteractiveBall:
-    def __init__(self, radius=35.0, depth=35.0):
+    def __init__(self, radius=35.0, center=(0.0, 0.0, 35.0)):
         self.base_radius = float(radius)
-        self.center = np.array([0.0, 0.0, float(depth)])
+        self.center = np.array(center, dtype=float, copy=True)
         self.rotation = np.eye(3)
         self.scale = 1.0
         self.mesh = o3d.geometry.TriangleMesh.create_sphere(

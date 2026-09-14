@@ -31,6 +31,7 @@ class RelativeDepthEstimator:
             min_cutoff=min_cutoff,
             beta=beta,
             derivative_cutoff=1.0,
+            median_window=3,
         )
         self.samples = []
         self.reference_size = None

@@ -17,7 +17,13 @@
   },
   "tracking": {
     "handedness_confirm_frames": 10,
-    "handedness_map": "direct"
+    "handedness_map": "direct",
+    "position_filter": {
+      "min_cutoff": 1.5,
+      "beta": 0.005,
+      "median_window": 3,
+      "max_speed": 500.0
+    }
   },
   "depth_estimation": {
     "enabled": true,
@@ -40,9 +46,16 @@
     "grab_tolerance": 8.0,
     "missing_timeout": 0.18
   },
+  "button": {
+    "center": [-150.0, 0.0, 350.0],
+    "width": 90.0,
+    "height": 60.0,
+    "travel": 20.0,
+    "tip_radius": 10.0
+  },
   "ball": {
     "radius": 50.0,
-    "depth": 250.0,
+    "center": [150.0, 0.0, 250.0],
     "minimum_scale": 0.35,
     "maximum_scale": 8.0,
     "scale_sensitivity": 0.8

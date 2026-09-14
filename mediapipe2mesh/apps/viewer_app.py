@@ -53,7 +53,8 @@ def run_viewer(config):
     validate_config(config)
     states = {
         side: HandState(
-            side, config.mano.iterations, config.mano.pose_smoothing
+            side, config.mano.iterations, config.mano.pose_smoothing,
+            getattr(config.tracking, 'position_filter', None),
         ) for side in SIDES
     }
     resolver = HandednessResolver(

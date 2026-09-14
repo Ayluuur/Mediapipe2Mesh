@@ -97,9 +97,13 @@ def retire_missing_single_hand(raw_detections, detections, states,
     if len(raw_detections) != 1 or len(detections) != 1:
         return
     only_side = next(iter(detections))
+    timestamp = states[only_side].last_seen
     for side, state in states.items():
         if side != only_side:
-            state.deactivate()
+            # A one-frame missed hand is still the same track. Preserve its
+            # filter history until the normal reacquisition timeout expires.
+            if timestamp - state.last_seen > 0.35:
+                state.deactivate()
             if on_retire is not None:
                 on_retire(side)
 

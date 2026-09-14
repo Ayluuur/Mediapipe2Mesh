@@ -23,6 +23,7 @@ from mediapipe2mesh.interaction import (
     PinchState,
     mano_pinch_point_to_scene,
 )
+from mediapipe2mesh.interaction.button import DepthButton, mano_index_tip_to_scene
 from mediapipe2mesh.tracking import (
     HandState,
     HandednessResolver,
@@ -38,12 +39,22 @@ from mediapipe2mesh.visualization import (
 
 
 def validate_config(config):
+    center = np.asarray(config.button.center, dtype=float)
+    if center.shape != (3,) or not np.all(np.isfinite(center)):
+        raise ValueError('button.center must contain three finite coordinates')
+    for name in ('width', 'height', 'travel', 'tip_radius'):
+        value = getattr(config.button, name)
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError('button.{} must be finite and positive'.format(name))
     if not 0.0 < config.pinch.enter_distance < config.pinch.exit_distance:
         raise ValueError(
             'Require 0 < pinch.enter_distance < pinch.exit_distance'
         )
-    if config.ball.radius <= 0.0 or config.ball.depth < 0.0:
-        raise ValueError('ball.radius must be positive and depth nonnegative')
+    ball_center = np.asarray(config.ball.center, dtype=float)
+    if ball_center.shape != (3,) or not np.all(np.isfinite(ball_center)):
+        raise ValueError('ball.center must contain three finite coordinates')
+    if not np.isfinite(config.ball.radius) or config.ball.radius <= 0.0:
+        raise ValueError('ball.radius must be finite and positive')
     if config.pinch.grab_tolerance < 0.0:
         raise ValueError('pinch.grab_tolerance must be nonnegative')
     if not 0.0 < config.ball.minimum_scale <= config.ball.maximum_scale:
@@ -67,7 +78,8 @@ def  run_interaction(config):
     validate_config(config)
     hand_states = {
         side: HandState(
-            side, config.mano.iterations, config.mano.pose_smoothing
+            side, config.mano.iterations, config.mano.pose_smoothing,
+            getattr(config.tracking, 'position_filter', None),
         ) for side in SIDES
     }
     pinch_states = {
@@ -96,8 +108,13 @@ def  run_interaction(config):
     view_mode = config.viewer.initial_view
     configure_view(visualizer, view_mode)
     mapper = SceneMapper()
-    ball = InteractiveBall(config.ball.radius, config.ball.depth)
+    ball = InteractiveBall(config.ball.radius, config.ball.center)
     ball.add_to(visualizer)
+    button = DepthButton(
+        config.button.center, config.button.width, config.button.height,
+        config.button.travel, config.button.tip_radius,
+    )
+    button.add_to(visualizer)
     controller = BallController(
         ball,
         config.ball.minimum_scale,
@@ -216,6 +233,12 @@ def  run_interaction(config):
                     state.submit_latest(executor)
 
                 controller.update(pinch_states)
+                button.update({
+                    side: mano_index_tip_to_scene(state, mapper, depths[side])
+                    for side, state in hand_states.items()
+                    if side in detections and state.vertices is not None
+                })
+                button.update_geometry(visualizer)
                 ball.update_geometry(visualizer)
                 for pinch in pinch_states.values():
                     pinch.update_geometry(visualizer)
@@ -276,6 +299,15 @@ def  run_interaction(config):
                         (12, frame.shape[0] - 18), cv2.FONT_HERSHEY_SIMPLEX,
                         0.52, (80, 255, 255), 1, cv2.LINE_AA,
                     )
+                cv2.putText(
+                    frame, 'Button: {}  presses: {}'.format(
+                        'PRESSED ' + '/'.join(sorted(button.contacts))
+                        if button.pressed else 'READY', button.press_count,
+                    ),
+                    (12, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
+                    (80, 255, 80) if button.pressed else (220, 220, 220),
+                    2, cv2.LINE_AA,
+                )
                 cv2.imshow('Pinch Interaction', frame)
                 key = cv2.waitKey(1) & 0xFF
                 if key in (10, 13):
