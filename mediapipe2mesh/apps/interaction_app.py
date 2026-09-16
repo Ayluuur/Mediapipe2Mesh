@@ -80,6 +80,7 @@ def  run_interaction(config):
         side: HandState(
             side, config.mano.iterations, config.mano.pose_smoothing,
             getattr(config.tracking, 'position_filter', None),
+            mirrored_input=config.camera.mirror,
         ) for side in SIDES
     }
     pinch_states = {

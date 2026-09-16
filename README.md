@@ -1,5 +1,7 @@
 # MediaPipe2Mesh
 
+Python 骨骼位移、旋转与坐标约定见 [骨骼数据接口文档](docs/python_skeleton_api.md)，包含异步调用示例和姿势恢复修正说明。
+
 从摄像头获取 MediaPipe Hands 的 21 个三维关键点，通过IK恢复对应的
  MANO 手部网格，并在 Open3D 中显示和交互。在原项目基础上增加了
  左右手独立跟踪、相对深度估计和基于捏合的小球操作，用于手势交互原型。

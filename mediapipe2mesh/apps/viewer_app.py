@@ -55,6 +55,7 @@ def run_viewer(config):
         side: HandState(
             side, config.mano.iterations, config.mano.pose_smoothing,
             getattr(config.tracking, 'position_filter', None),
+            mirrored_input=config.camera.mirror,
         ) for side in SIDES
     }
     resolver = HandednessResolver(

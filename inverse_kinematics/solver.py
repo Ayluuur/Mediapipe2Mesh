@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.linalg import cho_factor, cho_solve
 
 
 class Solver:
@@ -94,17 +95,15 @@ class Solver:
     out_n = np.shape(model.run(init).ravel())[0]
     jacobian = np.zeros([out_n, init.shape[0]])
 
-    last_update = 0
-    last_mse = 0
     # Do not modify the caller's warm-start buffer in-place.
     params = np.array(init, dtype=np.float64, copy=True)
+    u = max(float(u), 1e-12)
+    if v <= 1 or regularization < 0:
+      raise ValueError('v must exceed 1 and regularization must be nonnegative')
     for i in range(self.max_iter):
       baseline = model.run(params)
       residual = (baseline - target).reshape(out_n, 1)
-      mse = np.mean(np.square(residual))
-
-      if abs(mse - last_mse) < self.mse_threshold:
-        return params
+      cost = np.sum(residual ** 2) + regularization * np.sum((params - prior) ** 2)
 
       for k in range(params.shape[0]):
         jacobian[:, k] = self.get_derivative(
@@ -112,24 +111,31 @@ class Solver:
         )
 
       jtj = np.matmul(jacobian.T, jacobian)
-      jtj = jtj + (u + regularization) * np.eye(jtj.shape[0])
-
-      update = last_mse - mse
       rhs = np.matmul(jacobian.T, residual)
       if regularization:
         rhs += regularization * (params - prior).reshape(-1, 1)
-      try:
-        delta = np.linalg.solve(jtj, rhs).ravel()
-      except np.linalg.LinAlgError:
-        delta = np.linalg.lstsq(jtj, rhs, rcond=None)[0].ravel()
-      params -= delta
-
-      if update > last_update and update > 0:
-        u /= v
-      else:
+      accepted = False
+      improvement = 0.0
+      for _ in range(32):
+        system = jtj + (u + regularization) * np.eye(jtj.shape[0])
+        try:
+          delta = cho_solve(cho_factor(system, check_finite=False),
+                            rhs, check_finite=False).ravel()
+        except np.linalg.LinAlgError:
+          delta = np.linalg.lstsq(system, rhs, rcond=None)[0].ravel()
+        candidate = params - delta
+        result = model.run(candidate)
+        candidate_cost = (np.sum((result - target) ** 2)
+                          + regularization * np.sum((candidate - prior) ** 2))
+        if np.isfinite(candidate_cost) and candidate_cost < cost:
+          params = candidate
+          improvement = cost - candidate_cost
+          u = max(u / v, 1e-12)
+          accepted = True
+          break
         u *= v
-
-      last_update = update
-      last_mse = mse
-
+      if not accepted or improvement / out_n < self.mse_threshold:
+        break
+    # Derivatives and rejected trials also mutate the wrapped model.
+    model.run(params)
     return params

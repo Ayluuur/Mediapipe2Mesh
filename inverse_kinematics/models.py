@@ -51,7 +51,8 @@ class KinematicModel():
 
     self.update()
 
-  def set_params(self, pose_abs=None, pose_pca=None, pose_glb=None, shape=None):
+  def set_params(self, pose_abs=None, pose_pca=None, pose_glb=None, shape=None,
+                 keypoints_only=False):
     """
     Set model parameters and get the mesh. Do not set `pose_abs` and `pose_pca`
     at the same time.
@@ -59,13 +60,16 @@ class KinematicModel():
     Parameters
     ----------
     pose_abs : np.ndarray, shape [n_joints, 3], optional
-      The absolute model pose in axis-angle, by default None
+      Parent-local joint rotations in axis-angle radians, by default None
     pose_pca : np.ndarray, optional
       The PCA coefficients of the pose, shape [n_pose, 3], by default None
     pose_glb : np.ndarray, shape [1, 3], optional
       Global rotation for the model, by default None
     shape : np.ndarray, shape [n_shape], optional
       Shape coefficients of the pose, by default None
+    keypoints_only : bool, optional
+      Evaluate FK and surface tips only; leaves self.verts at its last full
+      update. Intended for IK derivatives; finish with a full update.
 
     Returns
     -------
@@ -75,7 +79,7 @@ class KinematicModel():
       Keypoints coordinates of the model, scale applied.
     """
     if pose_abs is not None:
-      self.pose = pose_abs
+      self.pose = np.asarray(pose_abs, dtype=np.float64).copy()
     elif pose_pca is not None:
       self.pose = np.dot(
         np.expand_dims(pose_pca, 0), self.pose_pca_basis[:pose_pca.shape[0]]
@@ -87,9 +91,9 @@ class KinematicModel():
       self.pose = np.concatenate([pose_glb, self.pose], 0)
     if shape is not None:
       self.shape = shape
-    return self.update()
+    return self.update(keypoints_only=keypoints_only)
 
-  def update(self):
+  def update(self, keypoints_only=False):
     """
     Re-compute vertices and keypoints with given parameters.
 
@@ -103,29 +107,37 @@ class KinematicModel():
     verts = self.mesh_template + self.mesh_shape_basis.dot(self.shape)
     self.J = self.J_regressor.dot(verts)
     self.R = self.rodrigues(self.pose.reshape((-1, 1, 3)))
-    G = np.empty((self.n_joints, 4, 4))
-    G[0] = self.with_zeros(np.hstack((self.R[0], self.J[0, :].reshape([3, 1]))))
+    # MANO pose correctives are applied before linear blend skinning.
+    pose_feature = (self.R[1:] - np.eye(3)).ravel()
+    indices = self.armature.keypoints_ext if keypoints_only else slice(None)
+    verts = verts[indices] + self.mesh_pose_basis[indices].dot(pose_feature)
+    G = np.tile(np.eye(4), (self.n_joints, 1, 1))
+    G[:, :3, :3] = self.R
+    G[0, :3, 3] = self.J[0]
+    G[1:, :3, 3] = self.J[1:] - self.J[self.parents[1:]]
     for i in range(1, self.n_joints):
-      G[i] = G[self.parents[i]].dot(self.with_zeros(
-          np.hstack([
-            self.R[i],
-            (self.J[i, :] - self.J[self.parents[i], :]).reshape([3, 1])
-          ])
-      ))
+      G[i] = G[self.parents[i]] @ G[i]
+    # Keep FK transforms before subtracting inverse-bind translations.
+    self.joint_transforms = G.copy()
+    self.joint_transforms[:, :3, 3] *= self.scale
     G = G - self.pack(np.matmul(
         G,
         np.hstack([self.J, np.zeros([self.n_joints, 1])]) \
           .reshape([self.n_joints, 4, 1])
     ))
-    T = np.tensordot(self.skinning_weights, G, axes=[[1], [0]])
+    T = np.tensordot(self.skinning_weights[indices], G, axes=[[1], [0]])
     verts = np.hstack((verts, np.ones([verts.shape[0], 1])))
 
-    self.verts = \
+    posed_verts = \
       np.matmul(T, verts.reshape([-1, 4, 1])).reshape([-1, 4])[:, :3]
-    self.keypoints = self.J_regressor_ext.dot(self.verts)
-
-    self.verts *= self.scale
-    self.keypoints *= self.scale
+    posed_verts *= self.scale
+    if not keypoints_only:
+      self.verts = posed_verts
+    # Regressing joints from the skinned surface causes pose-dependent drift.
+    self.keypoints = np.concatenate((
+        self.joint_transforms[:, :3, 3],
+        posed_verts if keypoints_only else posed_verts[self.armature.keypoints_ext],
+    ))
 
     return self.verts.copy(), self.keypoints.copy()
 
