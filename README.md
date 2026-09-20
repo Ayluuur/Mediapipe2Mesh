@@ -25,31 +25,20 @@ pip install -r requirements.txt
 
 ## 运行
 
-### MANO 双手预览
-
-默认读取 [configs/viewer.json](./configs/viewer.json)：
-
 ```powershell
-python main.py
+python main.py --mode interaction
+python main.py --mode multicore
+python main.py --mode viewer
 ```
 
-### 小球捏合交互
+分别表示` 交互预览` 、`多核并行测试` 、`原双手预览` 
 
-默认读取 [configs/interaction.json](./configs/interaction.json)：
+`--mode viewer` 保留原双手 MANO 预览并读取 `configs/viewer.json`。
 
-```powershell
-python interaction.py
-```
 
 
 ## 配置
 
-两个入口接收一个可选的 JSON 配置路径：
-
-```powershell
-python main.py path\to\viewer_override.json
-python interaction.py path\to\interaction_override.json
-```
 主要配置分组如下：
 
 | 分组 | 用途 |
@@ -64,47 +53,24 @@ python interaction.py path\to\interaction_override.json
 | `ball` | 球半径、中心坐标、缩放范围和灵敏度 |
 
 
-
-小球初始位置通过 `ball.center` 设置，格式为 `[x, y, z]`，单位为 mm。
-默认值为 `[0.0, 0.0, 250.0]`，第三个值 Z 取代原来的 `ball.depth`。
-自定义配置中的 `ball.depth` 也应改为 `ball.center`。
-
-## 深度按钮交互（Python）
-
-运行 `python interaction.py`，完成手掌深度标定后，将任意一只手的食指尖移向按钮。
-左右食指尖保留触碰判定，与 MANO 网格使用同一帧关节数据和场景坐标，不显示判定球。
-按钮被触碰时向深处压下并变绿；双手均离开后恢复。
-摄像头画面中的 `Button` 显示按下状态、触发手和累计按下次数。按 Enter 可重新标定。
-
-当前正面视角从负 Z 看向正 Z，因此按钮默认正面位于 `[110, 30, 370]` mm，
-比初始小球中心（Z=250 mm）更深，横向错开以方便观察。按钮沿 +Z 压下，
-切换观察视角不会改变按钮的物理位置和按压方向。
-
-可在 `configs/interaction.json` 的 `button` 分组调整 `center`（正面中心坐标）、
-`width`、`height`、`travel`（按压行程）和 `tip_radius`（判定球半径），单位均为 mm。
-判定包含前向快速穿越检测及释放容差；手部检测丢失会释放对应接触。
-
-## Python 跟踪抗抖
-
-世界关键点、屏幕手腕位置、场景 XY 和深度使用三帧中值处理，抑制孤立检测尖峰。
-位置滤波在计算自适应平滑系数前限制输入变化，避免把异常跳点当作快速运动。
-短暂漏检保留滤波历史，超过 0.35 秒后重新建立跟踪。
-
-新手部须经过 `tracking.handedness_confirm_frames` 帧连续确认才启用；跟踪期间
-按手腕位置关联并锁定左右身份，标签抖动不会直接切换 MANO 模型。持续丢失
-0.35 秒后关闭，重新进入时再次确认。初次确认的左右身份若不正确，需离开画面后重新进入。
-
-两个 Python 入口的 `tracking.position_filter` 均支持：
+## 跟踪抗抖
 
 | 配置 | 含义 |
 | --- | --- |
-| `min_cutoff` | 默认 1.5 Hz，降低后更平稳，但延迟增大 |
-| `beta` | 默认 0.005，越大越容易跟随快速变化 |
+| `min_cutoff` | 默认 3.0 Hz，降低后更平稳，但延迟增大 |
+| `beta` | 默认 0.02，越大越容易跟随快速变化 |
+| `derivative_cutoff` | 默认 2.0 Hz，控制速度估计的响应 |
 | `median_window` | 默认 3，必须为正奇数；设为 1 关闭中值处理 |
-| `max_speed` | 场景 XY 位置变化上限，默认 500 mm/s |
+| `max_speed` | 场景 XY 位置变化上限，默认 1500 mm/s |
 
-深度速度上限仍使用 `depth_estimation.max_speed`。三帧中值处理在稳定帧率下
-约增加一帧延迟；持续误识别不能仅靠滤波消除。
+### 并行推理
+
+“手部交互预览”使用单批计算，左右手各自保留一个持久 IK 线程，独立维护姿态平滑和 warm start。
+
+“多线程调用测试”左右手由持久线程调度，每手的 Jacobian 分片则由 8 个持久子进程计算。
+
+QT版本中，增加了 XNNPACK 线程数，可在配置文件中设置测试。
+
 
 ## Credits
 

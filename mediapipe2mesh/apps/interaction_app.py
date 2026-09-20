@@ -1,7 +1,8 @@
 """Pinch-driven virtual ball interaction application."""
 
 import time
-from concurrent.futures import ThreadPoolExecutor
+from mediapipe2mesh.tracking.performance import FrameRates
+from mediapipe2mesh.apps.parallel import DetectionPipeline, HandExecutor, print_parallel_config
 
 import cv2
 import mediapipe as mp
@@ -39,6 +40,8 @@ from mediapipe2mesh.visualization import (
 
 
 def validate_config(config):
+    if getattr(config.mano, 'executor', 'process') not in ('process', 'thread'):
+        raise ValueError('mano.executor must be process or thread')
     center = np.asarray(config.button.center, dtype=float)
     if center.shape != (3,) or not np.all(np.isfinite(center)):
         raise ValueError('button.center must contain three finite coordinates')
@@ -76,11 +79,14 @@ def validate_config(config):
 
 def  run_interaction(config):
     validate_config(config)
+    print_parallel_config(config)
     hand_states = {
         side: HandState(
             side, config.mano.iterations, config.mano.pose_smoothing,
             getattr(config.tracking, 'position_filter', None),
             mirrored_input=config.camera.mirror,
+            jacobian_workers=getattr(config.mano, 'jacobian_workers', 1),
+            jacobian_backend=getattr(config.mano, 'jacobian_backend', 'thread'),
         ) for side in SIDES
     }
     pinch_states = {
@@ -128,23 +134,17 @@ def  run_interaction(config):
     hands = create_hand_detector(mp_hands, config.detector)
     capture = open_camera(config.camera)
     next_sequence = 1
-    fps = 0.0
-    fps_frames = 0
-    fps_started = time.perf_counter()
+    rates = FrameRates(time.perf_counter())
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    pipeline = DetectionPipeline(capture, hands, config.camera.mirror)
+    with HandExecutor(getattr(config.mano, 'executor', 'process')) as executor:
         try:
-            while capture.isOpened():
-                ok, frame = capture.read()
-                if not ok:
+            while True:
+                packet = pipeline.read()
+                if packet is None:
                     break
-                if config.camera.mirror:
-                    frame = cv2.flip(frame, 1)
-                now = time.perf_counter()
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                rgb.flags.writeable = False
-                results = hands.process(rgb)
-                rgb.flags.writeable = True
+                frame, now, results = packet
+                main_started = time.perf_counter()
 
                 # Mesh and grip point share one immutable IK snapshot per frame.
                 for state in hand_states.values():
@@ -263,26 +263,16 @@ def  run_interaction(config):
 
                 visualizer.poll_events()
                 visualizer.update_renderer()
-                fps_frames += 1
-                elapsed = now - fps_started
-                if elapsed >= 0.5:
-                    fps = fps_frames / elapsed
-                    fps_frames = 0
-                    fps_started = now
-                cv2.putText(
-                    frame,
-                    'FPS {:.1f}  pinch enter/exit: {:.0f}/{:.0f}mm'.format(
-                        fps,
-                        config.pinch.enter_distance * 1000.0,
-                        config.pinch.exit_distance * 1000.0,
-                    ),
-                    (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.58,
-                    (80, 255, 80), 2, cv2.LINE_AA,
+                rates.record_phases(
+                    packet.capture_seconds, packet.mediapipe_seconds,
+                    time.perf_counter() - main_started,
                 )
+                rates.update(hand_states, visible, time.perf_counter())
+                rates.draw(frame, hand_states, now, resolver.track_timeout)
                 cv2.putText(
                     frame,
                     'Ball scale {:.2f}x  [1 front / 3 depth]'.format(ball.scale),
-                    (12, 54), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
+                    (12, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
                     (220, 220, 220), 1, cv2.LINE_AA,
                 )
                 cv2.putText(
@@ -291,7 +281,7 @@ def  run_interaction(config):
                         'ON' if config.camera.mirror else 'OFF',
                         config.tracking.handedness_map.upper(),
                     ),
-                    (12, 78), cv2.FONT_HERSHEY_SIMPLEX, 0.48,
+                    (12, 126), cv2.FONT_HERSHEY_SIMPLEX, 0.48,
                     (220, 220, 220), 1, cv2.LINE_AA,
                 )
                 if config.depth_estimation.enabled:
@@ -305,7 +295,7 @@ def  run_interaction(config):
                         'PRESSED ' + '/'.join(sorted(button.contacts))
                         if button.pressed else 'READY', button.press_count,
                     ),
-                    (12, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
+                    (12, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
                     (80, 255, 80) if button.pressed else (220, 220, 220),
                     2, cv2.LINE_AA,
                 )
@@ -322,6 +312,7 @@ def  run_interaction(config):
                 elif key in (ord('q'), 27):
                     break
         finally:
+            pipeline.close()
             capture.release()
             hands.close()
             cv2.destroyAllWindows()

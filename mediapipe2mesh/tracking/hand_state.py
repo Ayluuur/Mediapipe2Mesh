@@ -1,6 +1,8 @@
 """Per-hand asynchronous MANO solve state."""
 
 from copy import deepcopy
+from collections import deque
+import time
 
 import numpy as np
 import open3d as o3d
@@ -8,6 +10,7 @@ import open3d as o3d
 from mediapipe2mesh.config import PROJECT_ROOT
 from mediapipe2mesh.ik import Keypoints2Mano
 from .filters import OneEuroFilter
+from .performance import SolveSnapshot
 
 
 HAND_COLORS = {
@@ -18,16 +21,29 @@ HAND_COLORS = {
 
 class HandState:
     def __init__(self, side, max_iter, pose_smoothing, position_filter_config=None,
-                 mirrored_input=True):
+                 mirrored_input=True, jacobian_workers=1, jacobian_backend='thread'):
         self.side = side
         model_name = 'MANO_LEFT.npz' if side == 'left' else 'MANO_RIGHT.npz'
+        self.solver_options = dict(
+            model_path=str(PROJECT_ROOT / model_name), side=side,
+            max_iter=max_iter, pose_smoothing=pose_smoothing,
+            mirrored_input=mirrored_input,
+            jacobian_workers=jacobian_workers,
+            jacobian_backend=jacobian_backend,
+        )
+        self.track_generation = 0
+        self.result_version = 0
+        self.ik_timings = deque(maxlen=20)
         self.converter = Keypoints2Mano(
             str(PROJECT_ROOT / model_name), side, max_iter, pose_smoothing,
             mirrored_input=mirrored_input,
+            jacobian_workers=jacobian_workers,
+            jacobian_backend=jacobian_backend,
         )
         self.filter = OneEuroFilter(median_window=3)
-        position_options = dict(min_cutoff=1.5, beta=0.005,
-                                median_window=3, max_speed=500.0)
+        position_options = dict(min_cutoff=3.0, beta=0.02,
+                                derivative_cutoff=2.0,
+                                median_window=3, max_speed=1500.0)
         if position_filter_config is not None:
             position_options.update(position_filter_config.as_dict())
         # The fallback wrist uses normalized image coordinates, whereas the
@@ -67,17 +83,25 @@ class HandState:
         if self.future is None and self.pending_landmarks is not None:
             landmarks = self.pending_landmarks
             self.pending_landmarks = None
-            self.future = executor.submit(self._solve, landmarks)
+            if hasattr(executor, 'submit_hand'):
+                self.future = executor.submit_hand(self, landmarks)
+            else:
+                self.future = executor.submit(self._solve, landmarks)
 
     def collect_result(self):
         if self.future is None or not self.future.done():
             return
         try:
-            vertices, keypoints, skeleton = self.future.result()
+            snapshot = self.future.result()
+            vertices, keypoints, skeleton = snapshot
             if not self.discard_future:
                 self.vertices = vertices
                 self.keypoints = keypoints
                 self.skeleton = skeleton
+                self.result_version += 1
+                seconds = getattr(snapshot, 'ik_seconds', 0.0)
+                if np.isfinite(seconds) and seconds > 0:
+                    self.ik_timings.append(seconds)
         except Exception as exc:
             print('{} hand IK failed: {}'.format(self.side, exc))
         self.future = None
@@ -86,12 +110,19 @@ class HandState:
         self.discard_future = False
 
     def _solve(self, landmarks):
+        started = time.perf_counter()
         self.converter.get_mano_params(landmarks)
-        return (
+        seconds = time.perf_counter() - started
+        return SolveSnapshot(
             self.converter.get_camera_oriented_vertices().copy(),
             self.converter.get_camera_oriented_keypoints().copy(),
             self.converter.get_skeleton(),
+            seconds,
         )
+
+    @property
+    def mean_ik_seconds(self):
+        return sum(self.ik_timings) / len(self.ik_timings) if self.ik_timings else 0.0
 
     def get_skeleton(self, space='camera'):
         """Read the last collected mesh frame without touching the IK worker.
@@ -110,6 +141,8 @@ class HandState:
         return deepcopy(self.skeleton)
 
     def begin_track(self):
+        self.ik_timings.clear()
+        self.track_generation += 1
         self.scene_mm_per_pixel = None
         self.scene_position_filter.reset()
         self.scene_translation = None
@@ -124,6 +157,7 @@ class HandState:
             self.discard_future = True
 
     def deactivate(self):
+        self.ik_timings.clear()
         self.scene_mm_per_pixel = None
         self.scene_position_filter.reset()
         self.scene_translation = None

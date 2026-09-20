@@ -32,7 +32,8 @@ class TrackingJitterTests(unittest.TestCase):
         for frame in range(1, 181):
             positions.append(filt([200., 100.], frame / 30))
         speeds = np.linalg.norm(np.diff(positions, axis=0), axis=1) * 30
-        self.assertLessEqual(max(speeds), 500 + 1e-8)
+        limit = load_config('interaction.json').tracking.position_filter.max_speed
+        self.assertLessEqual(max(speeds), limit + 1e-8)
         np.testing.assert_allclose(positions[-1], [200, 100], atol=0.1)
 
     def test_ordinary_motion_still_follows(self):
@@ -41,6 +42,22 @@ class TrackingJitterTests(unittest.TestCase):
             target = np.array([frame * 2., 0.])  # 60 mm/s.
             actual = filt(target, frame / 30)
         self.assertLess(np.linalg.norm(target - actual), 12)
+
+    def test_wrist_motion_lag_is_bounded_at_normal_and_fast_speeds(self):
+        for fps in (30, 60):
+            for speed in (60., 300., 600.):
+                with self.subTest(fps=fps, speed=speed):
+                    filt = self.position_filter()
+                    old = OneEuroFilter(min_cutoff=1.5, beta=.005,
+                                        median_window=3, max_speed=500.)
+                    for frame in range(2 * fps + 1):
+                        target = np.array([speed * frame / fps, 0.])
+                        actual = filt(target, frame / fps)
+                        previous = old(target, frame / fps)
+                    lag = np.linalg.norm(target - actual) / speed
+                    old_lag = np.linalg.norm(target - previous) / speed
+                    self.assertLess(lag, .09)
+                    self.assertLess(lag, old_lag * .75)
 
     def test_metric_scale_spike_is_filtered_before_mesh_translation(self):
         state = SimpleNamespace(keypoints=np.zeros((21, 3)),

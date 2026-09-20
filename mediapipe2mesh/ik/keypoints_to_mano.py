@@ -1,11 +1,15 @@
 """MediaPipe landmark retargeting and MANO inverse kinematics."""
 
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 
 from inverse_kinematics.armatures import MANOArmature
 from inverse_kinematics.models import KinematicModel
 from inverse_kinematics.solver import Solver
+from inverse_kinematics.parallel import initialize_batch_model, evaluate_batch
 from .skeleton import SkeletonPose
 
 
@@ -21,11 +25,58 @@ FINGER_CHAINS = (
 
 
 class PoseOnlyWrapper:
-    def __init__(self, core, n_pose):
+    def __init__(self, core, n_pose, jacobian_workers=1, jacobian_backend='thread'):
         self.core = core
         self.n_params = n_pose
         self.shape = np.zeros(core.n_shape_params)
         self.global_rotation = np.zeros(3)
+        self.jacobian_workers = jacobian_workers
+        self.jacobian_backend = jacobian_backend
+        self.worker_pids = set()
+        self.worker_stats = {}
+        self._process_pools = []
+        self._executor = None
+        if jacobian_workers == 0:
+            self.run_batch = None  # Reference scalar finite-difference path.
+
+    def run_batch(self, poses):
+        if self.jacobian_workers == 1:
+            return self.core.keypoints_batch(poses, self.shape, self.global_rotation)
+        chunks = np.array_split(poses, min(self.jacobian_workers, len(poses)))
+        if self.jacobian_backend == 'process':
+            if not self._process_pools:
+                # A dedicated queue per shard ensures that short batches cannot
+                # all be consumed by the first worker that finishes spawning.
+                self._process_pools = [ProcessPoolExecutor(
+                    max_workers=1,
+                    mp_context=multiprocessing.get_context('spawn'),
+                    initializer=initialize_batch_model,
+                    initargs=(self.core.model_path, self.core.armature, self.core.scale),
+                ) for _ in range(self.jacobian_workers)]
+            jobs = [pool.submit(
+                evaluate_batch, chunk, self.shape, self.global_rotation
+            ) for pool, chunk in zip(self._process_pools, chunks)]
+            results = [job.result() for job in jobs]
+            for _, pid, cpu_seconds in results:
+                self.worker_pids.add(pid)
+                stats = self.worker_stats.setdefault(pid, {'batches': 0, 'cpu_seconds': 0.0})
+                stats['batches'] += 1
+                stats['cpu_seconds'] += cpu_seconds
+            return np.concatenate([points for points, _, _ in results])
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=self.jacobian_workers)
+        jobs = [self._executor.submit(
+            self.core.keypoints_batch, chunk, self.shape, self.global_rotation
+        ) for chunk in chunks]
+        return np.concatenate([job.result() for job in jobs])
+
+    def close(self):
+        for pool in self._process_pools:
+            pool.shutdown(wait=True)
+        self._process_pools.clear()
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
+            self._executor = None
 
     def run(self, pose_pca):
         return self.core.set_params(
@@ -39,18 +90,26 @@ class PoseOnlyWrapper:
 class Keypoints2Mano:
     def __init__(self, model_path='./MANO_RIGHT.npz', side=None,
                  max_iter=5, pose_smoothing=0.70, n_pose=N_POSE,
-                 mirrored_input=True):
+                 mirrored_input=True, jacobian_workers=1, jacobian_backend='thread'):
         model_path = str(model_path)
         if not 1 <= n_pose <= 45:
             raise ValueError('n_pose must be between 1 and 45')
         if not 0.0 <= pose_smoothing <= 1.0:
             raise ValueError('pose_smoothing must be between 0 and 1')
+        if (isinstance(jacobian_workers, bool)
+                or not isinstance(jacobian_workers, int)
+                or not 0 <= jacobian_workers <= 45):
+            raise ValueError('jacobian_workers must be an integer in [0, 45]')
+        if jacobian_backend not in ('thread', 'process'):
+            raise ValueError('jacobian_backend must be thread or process')
         mesh = KinematicModel(model_path, MANOArmature, scale=1000)
         self.side = (side or ('left' if 'LEFT' in model_path.upper()
                               else 'right')).lower()
         if self.side not in ('left', 'right'):
             raise ValueError("side must be 'left' or 'right'")
-        self.wrapper = PoseOnlyWrapper(mesh, n_pose=n_pose)
+        self.wrapper = PoseOnlyWrapper(mesh, n_pose=n_pose,
+                                      jacobian_workers=jacobian_workers,
+                                      jacobian_backend=jacobian_backend)
         self.mirrored_input = bool(mirrored_input)
         self._input_basis = np.diag([-1.0, 1.0, 1.0]) if mirrored_input else np.eye(3)
         self.solver = Solver(
@@ -146,6 +205,9 @@ class Keypoints2Mano:
                 rotations[joint] = rotations[parent] @ local[joint]
         pose = Rotation.from_matrix(local[1:]).as_rotvec().ravel()
         return self._pose_encoder @ (pose - self.mesh.pose_pca_mean)
+
+    def close(self):
+        self.wrapper.close()
 
     def reset(self):
         self._pose = self._neutral_pose.copy()

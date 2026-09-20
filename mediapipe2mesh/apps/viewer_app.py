@@ -1,7 +1,8 @@
 """Webcam MANO viewer application."""
 
 import time
-from concurrent.futures import ThreadPoolExecutor
+from mediapipe2mesh.tracking.performance import FrameRates
+from mediapipe2mesh.apps.parallel import DetectionPipeline, HandExecutor, print_parallel_config
 
 import cv2
 import mediapipe as mp
@@ -32,6 +33,8 @@ from mediapipe2mesh.visualization import (
 
 
 def validate_config(config):
+    if getattr(config.mano, 'executor', 'process') not in ('process', 'thread'):
+        raise ValueError('mano.executor must be process or thread')
     if not 0.0 <= config.mano.pose_smoothing <= 1.0:
         raise ValueError('mano.pose_smoothing must be in [0, 1]')
     if config.tracking.handedness_confirm_frames < 1:
@@ -51,11 +54,14 @@ def validate_config(config):
 
 def run_viewer(config):
     validate_config(config)
+    print_parallel_config(config)
     states = {
         side: HandState(
             side, config.mano.iterations, config.mano.pose_smoothing,
             getattr(config.tracking, 'position_filter', None),
             mirrored_input=config.camera.mirror,
+            jacobian_workers=getattr(config.mano, 'jacobian_workers', 1),
+            jacobian_backend=getattr(config.mano, 'jacobian_backend', 'thread'),
         ) for side in SIDES
     }
     resolver = HandednessResolver(
@@ -81,23 +87,17 @@ def run_viewer(config):
     drawing = mp.solutions.drawing_utils
     hands = create_hand_detector(mp_hands, config.detector)
     capture = open_camera(config.camera)
-    fps = 0.0
-    fps_frames = 0
-    fps_started = time.perf_counter()
+    rates = FrameRates(time.perf_counter())
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    pipeline = DetectionPipeline(capture, hands, config.camera.mirror)
+    with HandExecutor(getattr(config.mano, 'executor', 'process')) as executor:
         try:
-            while capture.isOpened():
-                ok, frame = capture.read()
-                if not ok:
+            while True:
+                packet = pipeline.read()
+                if packet is None:
                     break
-                if config.camera.mirror:
-                    frame = cv2.flip(frame, 1)
-                now = time.perf_counter()
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                rgb.flags.writeable = False
-                results = hands.process(rgb)
-                rgb.flags.writeable = True
+                frame, now, results = packet
+                main_started = time.perf_counter()
                 for state in states.values():
                     state.collect_result()
                 raw = extract_detections(
@@ -183,23 +183,18 @@ def run_viewer(config):
                 visualizer.poll_events()
                 visualizer.update_renderer()
 
-                fps_frames += 1
-                elapsed = now - fps_started
-                if elapsed >= 0.5:
-                    fps = fps_frames / elapsed
-                    fps_frames = 0
-                    fps_started = now
-                cv2.putText(
-                    frame, 'FPS {:.1f}'.format(fps), (12, 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (80, 255, 80), 2,
-                    cv2.LINE_AA,
+                rates.record_phases(
+                    packet.capture_seconds, packet.mediapipe_seconds,
+                    time.perf_counter() - main_started,
                 )
+                rates.update(states, visible, time.perf_counter())
+                rates.draw(frame, states, now, resolver.track_timeout)
                 cv2.putText(
                     frame,
                     'Open3D view: {}  [1 front / 3 depth]'.format(
                         view_mode.upper()
                     ),
-                    (12, 54), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
+                    (12, 102), cv2.FONT_HERSHEY_SIMPLEX, 0.52,
                     (210, 210, 210), 1, cv2.LINE_AA,
                 )
                 if config.depth_estimation.enabled:
@@ -221,6 +216,7 @@ def run_viewer(config):
                 elif key in (ord('q'), 27):
                     break
         finally:
+            pipeline.close()
             capture.release()
             hands.close()
             cv2.destroyAllWindows()

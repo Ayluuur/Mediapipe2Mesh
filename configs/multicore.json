@@ -13,8 +13,8 @@
   },
   "mano": {
     "executor": "thread",
-    "jacobian_workers": 1,
-    "jacobian_backend": "thread",
+    "jacobian_workers": 8,
+    "jacobian_backend": "process",
     "iterations": 3,
     "pose_smoothing": 0.7
   },

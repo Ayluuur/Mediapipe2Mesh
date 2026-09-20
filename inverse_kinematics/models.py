@@ -18,6 +18,7 @@ class KinematicModel():
     scale : int, optional
       Scale of the model to make the solving easier, by default 1
     """
+    self.model_path = str(model_path)
     with open(model_path, 'rb') as f:
       params = np.load(model_path, allow_pickle=True)
       
@@ -140,6 +141,44 @@ class KinematicModel():
     ))
 
     return self.verts.copy(), self.keypoints.copy()
+
+  def keypoints_batch(self, pose_pca, shape, pose_glb):
+    """Evaluate independent PCA poses together without mutating model state.
+
+    Shape regression is shared by the whole batch. Only the five surface tips
+    need skinning; the other landmarks come directly from forward kinematics.
+    Local temporaries make this safe to call concurrently on disjoint batches.
+    """
+    pose_pca = np.asarray(pose_pca, dtype=np.float64)
+    count, n_pose = pose_pca.shape
+    pose = np.empty((count, self.n_joints, 3))
+    pose[:, 0] = np.asarray(pose_glb).reshape(3)
+    pose[:, 1:] = (pose_pca @ self.pose_pca_basis[:n_pose]
+                   + self.pose_pca_mean).reshape(count, self.n_joints - 1, 3)
+    rotations = self.rodrigues(pose.reshape(-1, 1, 3)).reshape(
+      count, self.n_joints, 3, 3
+    )
+    shaped = self.mesh_template + self.mesh_shape_basis.dot(shape)
+    joints = self.J_regressor.dot(shaped)
+    transforms = np.tile(np.eye(4), (count, self.n_joints, 1, 1))
+    transforms[:, :, :3, :3] = rotations
+    transforms[:, 0, :3, 3] = joints[0]
+    transforms[:, 1:, :3, 3] = joints[1:] - joints[self.parents[1:]]
+    for joint in range(1, self.n_joints):
+      transforms[:, joint] = transforms[:, self.parents[joint]] @ transforms[:, joint]
+    fk = transforms[:, :, :3, 3].copy()
+    transforms[:, :, :3, 3] -= np.einsum(
+      'bjkl,jl->bjk', transforms[:, :, :3, :3], joints
+    )
+    tips = self.armature.keypoints_ext
+    feature = (rotations[:, 1:] - np.eye(3)).reshape(count, -1)
+    vertices = shaped[tips] + np.einsum(
+      'vcp,bp->bvc', self.mesh_pose_basis[tips], feature
+    )
+    skinning = np.einsum('vj,bjkl->bvkl', self.skinning_weights[tips], transforms)
+    vertices = (np.einsum('bvkl,bvl->bvk', skinning[:, :, :3, :3], vertices)
+                + skinning[:, :, :3, 3])
+    return np.concatenate((fk, vertices), axis=1) * self.scale
 
   def rodrigues(self, r):
     """

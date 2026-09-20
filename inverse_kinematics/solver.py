@@ -105,10 +105,21 @@ class Solver:
       residual = (baseline - target).reshape(out_n, 1)
       cost = np.sum(residual ** 2) + regularization * np.sum((params - prior) ** 2)
 
-      for k in range(params.shape[0]):
-        jacobian[:, k] = self.get_derivative(
-          model, params, k, baseline=baseline
-        )
+      if callable(getattr(model, 'run_batch', None)):
+        perturbations = params + self.eps * np.eye(params.size)
+        if self.central_difference:
+          samples = model.run_batch(np.concatenate((
+            perturbations, params - self.eps * np.eye(params.size)
+          )))
+          derivatives = (samples[:params.size] - samples[params.size:]) / (2 * self.eps)
+        else:
+          derivatives = (model.run_batch(perturbations) - baseline) / self.eps
+        jacobian[:] = derivatives.reshape(params.size, out_n).T
+      else:
+        for k in range(params.shape[0]):
+          jacobian[:, k] = self.get_derivative(
+            model, params, k, baseline=baseline
+          )
 
       jtj = np.matmul(jacobian.T, jacobian)
       rhs = np.matmul(jacobian.T, residual)
