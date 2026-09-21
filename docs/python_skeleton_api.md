@@ -16,7 +16,7 @@ pose_pca = converter.get_mano_params(landmarks)
 bones = converter.get_skeleton('camera')
 
 positions_mm = bones.positions           # (16, 3)，关节位置
-displacements_mm = bones.displacements   # (16, 3)，相对当前朝向下绑定姿势的位置差
+displacements_mm = bones.displacements   # (16, 3)，相对绑定姿势的位置差
 local_rotations = bones.local_rotations  # (16, 3, 3)，相对父关节的旋转
 local_quaternions = bones.local_quaternions  # (16, 4)，xyzw
 transforms = bones.transforms            # (16, 4, 4)，关节局部 -> 输出空间

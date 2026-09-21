@@ -1,17 +1,17 @@
 # MediaPipe2Mesh
 
-Python 骨骼位移、旋转与坐标约定见 [骨骼数据接口文档](docs/python_skeleton_api.md)，包含异步调用示例和姿势恢复修正说明。
+骨骼位移、旋转与坐标约定见 [骨骼数据接口文档](docs/python_skeleton_api.md)
 
-从摄像头获取 MediaPipe Hands 的 21 个三维关键点，通过IK恢复对应的
- MANO 手部网格，并在 Open3D 中显示和交互。在原项目基础上增加了
- 左右手独立跟踪、相对深度估计和基于捏合的小球操作，用于手势交互原型。
+项目从摄像头获取 MediaPipe Hands 的 21 个三维关键点，经 IK 拟合 MANO
+手部网格并在 Open3D 中显示。代码提供左右手独立跟踪、相对深度估计和
+基于捏合的小球交互。
 
 ## 功能
 
 - 根据稳定后的 handedness 自动选择 `MANO_LEFT.npz` 或 `MANO_RIGHT.npz`。
-- 使用 One Euro Filter、上一帧姿态先验和异步 IK 降低抖动与界面阻塞。
+- 使用 One Euro Filter、姿态平滑和异步 IK 降低关键点抖动，并将 IK 计算移出主渲染循环。
 - 根据手掌屏幕尺寸估计相对深度。
-- 使用捏合操作可对小球进行移动、旋转、缩放操作
+- 与小球和按钮的交互演示
 
 
 ## 安装
@@ -31,9 +31,11 @@ python main.py --mode multicore
 python main.py --mode viewer
 ```
 
-分别表示` 交互预览` 、`多核并行测试` 、`原双手预览` 
+三个模式分别使用对应的默认配置文件：
 
-`--mode viewer` 保留原双手 MANO 预览并读取 `configs/viewer.json`。
+- `interaction` 读取 `configs/interaction.json`，启动带小球和按钮的手部交互预览。
+- `multicore` 读取 `configs/multicore.json`，启动手部交互预览；每只手由一个持久线程调度 IK，Jacobian 计算由 8 个持久子进程分片执行。
+- `viewer` 读取 `configs/viewer.json`，启动双手 MANO 预览，不包含小球和按钮交互。
 
 
 
@@ -45,8 +47,8 @@ python main.py --mode viewer
 | --- | --- |
 | `camera` | 摄像头编号、分辨率和画面镜像 |
 | `detector` | MediaPipe 模型复杂度、手数和检测阈值 |
-| `mano` | IK 迭代次数与姿态平滑权重 |
-| `tracking` | handedness 映射和切换确认帧数 |
+| `mano` | IK 迭代次数、姿态平滑权重；`executor` 控制每只手的 IK 调度方式，`jacobian_backend` 和 `jacobian_workers` 控制 Jacobian 计算后端与 worker 数量 |
+| `tracking` | handedness 映射、切换确认帧数，以及 `position_filter` 的 One Euro/中值滤波参数和场景 XY 速度上限 |
 | `depth_estimation` | 手掌尺寸标定、Z 范围、滤波和移动倍率 |
 | `viewer` | Open3D 初始视角与窗口名称 |
 | `pinch` | 捏合进入/退出阈值和抓取容差 |
